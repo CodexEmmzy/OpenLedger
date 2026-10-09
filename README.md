@@ -27,7 +27,7 @@ These goals are captured in the [architecture decision records](docs/adr/). The 
 
 Phase 0 runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose as a reserved service but no application currently depends on it. The simulator and dashboard are placeholders, not production clients.
 
-The supplied system diagram is the **target architecture**, not a picture of the current deployment. The present and planned designs, request flow, scaling rationale, and Phase 1 WSL PostgreSQL setup are described in [the architecture guide](docs/architecture.md).
+The supplied system diagram is the **target architecture**, not a picture of the current deployment. The present and planned designs, request flow, scaling rationale, and Phase 1 local PostgreSQL setup are described in [the architecture guide](docs/architecture.md).
 
 ![Target OpenLedger topology with stateless API replicas, PgBouncer, Redis, a Postgres primary, read replica, and workers](docs/OpenledgerArchitecture.png)
 
@@ -145,7 +145,7 @@ npm run dev:worker
 npm run dev:simulator
 ```
 
-The `dev:*` scripts watch source files. To run one process, start only its command. Set `DATABASE_URL` in that terminal before starting the API or worker. Phase 1 will use the local Ubuntu WSL PostgreSQL instance; see [the database setup and architecture guide](docs/architecture.md#wsl-postgresql-for-phase-1-development).
+The `dev:*` scripts watch source files. Each process can be started independently. The API and worker require `DATABASE_URL` in their process environment. Phase 1 local Linux and Windows PostgreSQL setup is documented in [the architecture guide](docs/architecture.md#local-postgresql-for-phase-1-development).
 
 ## Configuration
 
@@ -195,6 +195,6 @@ No project license has been selected yet. Decide on a license before presenting 
 
 ## Roadmap and Visual References
 
-Phase-specific scope and exit criteria live in [docs/roadmap/phase-0.md](docs/roadmap/phase-0.md); scaling targets live in [docs/targets.md](docs/targets.md). Architecture decisions live under [docs/adr/](docs/adr/).
+The public roadmap records phase scope and exit criteria in [docs/roadmap/phase-0.md](docs/roadmap/phase-0.md), with scaling targets in [docs/targets.md](docs/targets.md). It distinguishes implemented foundations from planned capabilities so progress remains visible without presenting future work as delivered. Architecture decisions live under [docs/adr/](docs/adr/).
 
 The supplied architecture image is included above and in the [architecture guide](docs/architecture.md). Future diagrams should distinguish implemented behavior from proposed design and include a short rationale so the visuals explain decisions, not just components.

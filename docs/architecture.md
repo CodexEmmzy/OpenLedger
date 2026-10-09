@@ -1,6 +1,6 @@
 # OpenLedger Architecture
 
-This guide uses diagrams to separate what runs today from what the project is designed to grow into. The target diagram is intentionally aspirational: it is not evidence that replicas, caching, provider webhooks, or horizontal API scaling have already been built or load-tested.
+This guide separates the current implementation from the proposed target architecture. The target diagram is aspirational: replicas, caching, provider webhooks, and horizontal API scaling are not yet implemented or load-tested.
 
 ## Current: Phase 0
 
@@ -17,7 +17,7 @@ flowchart LR
 
 The Phase 0 application has one API process, one worker process, one Postgres primary, and PgBouncer. The worker only checks database connectivity. The simulator exposes a health endpoint but does not generate provider traffic or call the API. Redis starts in Compose but application code does not use it. Migrations connect directly to Postgres; API and worker database traffic goes through PgBouncer.
 
-These distinctions matter: a service appearing in Compose is not the same as a production feature being implemented. Current endpoints and limitations are documented in the [Phase 0 guide](roadmap/phase-0.md).
+Compose services do not necessarily represent implemented application features. Current endpoints and limitations are documented in the [Phase 0 guide](roadmap/phase-0.md).
 
 ## Target: Scaled Deployment
 
@@ -52,7 +52,7 @@ The target is not a mandate to deploy every box at once. Add replicas, caching, 
 
 ## Candidate Transfer Write Path
 
-This sequence sketches the correctness boundary to design and test in the next implementation phase. It is a design direction, not an existing endpoint implementation.
+This sequence sketches a correctness boundary for the next implementation phase. It is a design direction, not an existing endpoint implementation.
 
 ```mermaid
 sequenceDiagram
@@ -62,12 +62,12 @@ sequenceDiagram
     participant W as Worker
     C->>A: Transfer + idempotency key
     A->>A: Validate contract and request
-    A->>P: Begin transaction; claim/check idempotency key
+    A->>P: Begin transaction and claim or check idempotency key
     A->>P: Lock affected accounts in stable order
     A->>P: Check currency and available funds
     A->>P: Insert transfer and balanced ledger entries
     A->>P: Update derived balance state and insert outbox event
-    A->>P: Commit all durable state together
+    A->>P: Commit all durable state atomically
     P-->>A: Commit result
     A-->>C: Stable transfer response
     W->>P: Claim committed outbox work
@@ -75,7 +75,7 @@ sequenceDiagram
     W->>P: Record outcome
 ```
 
-The central invariant is that the transfer, its debit and credit entries, any derived balance update, the idempotency result, and the outbox event cannot be partially committed. For every posted transaction, the sum of its entries is zero. Concurrent debits must be serialized or otherwise constrained so the same available funds cannot be spent twice. Exact locking, schema constraints, retry handling, and balance representation must be settled in implementation ADRs and proven with Postgres integration and concurrency tests.
+The central invariant is that the transfer, its debit and credit entries, any derived balance update, the idempotency result, and the outbox event cannot be partially committed. For every posted transaction, the sum of its entries is zero. Concurrent debits must be serialized or otherwise constrained so the same available funds cannot be spent twice. Implementation ADRs and Postgres integration and concurrency tests must establish the locking strategy, schema constraints, retry behavior, and balance representation.
 
 ## Read and Write Boundaries
 
@@ -96,40 +96,64 @@ flowchart LR
 
 The dotted paths are optional future optimizations. The primary transaction is the only authority for accepting a transfer; cache and replica data may be stale and must not authorize spending.
 
-## WSL PostgreSQL for Phase 1 Development
+## Local PostgreSQL for Phase 1 Development
 
-The next implementation phase will use the Ubuntu WSL PostgreSQL instance for local development and database-backed tests. The current workstation has Ubuntu 24.04 with PostgreSQL 16.15; cluster `16/main` is online on port `5432`, and Windows can reach it through `127.0.0.1:5432`. This has been checked with:
+The next implementation phase uses a local PostgreSQL instance for development and database-backed tests. The Phase 0 Compose stack remains available for reproducible startup and CI. Only one local service should bind PostgreSQL's default port at a time.
 
-```powershell
-wsl.exe -d Ubuntu -- psql --version
-wsl.exe -d Ubuntu -- pg_lsclusters
-wsl.exe -d Ubuntu -- pg_isready -h 127.0.0.1 -p 5432
-Test-NetConnection -ComputerName 127.0.0.1 -Port 5432 -InformationLevel Quiet
-```
+### Linux
 
-If the cluster is stopped after a WSL restart, start it inside Ubuntu:
+On Debian or Ubuntu, PostgreSQL can be managed with the distribution's cluster tools. Start the local cluster and verify readiness:
 
 ```bash
 sudo pg_ctlcluster 16 main start
-pg_isready -h 127.0.0.1 -p 5432
+pg_isready -h localhost -p 5432
 ```
 
-Create the development role and database once, only if they do not already exist. The role command prompts for a local password; use a development-only value and do not commit it.
+Create the development role and database once, if they do not already exist. The role command prompts for a password. Use a development-only password and keep it out of source control.
 
 ```bash
 sudo -u postgres createuser --pwprompt openledger
 sudo -u postgres createdb --owner=openledger openledger
 ```
 
-Then run the API and migration commands from the Windows repository checkout with `DATABASE_URL` set to the WSL-forwarded localhost endpoint:
+### Windows PowerShell
+
+For a native Windows PostgreSQL installation, check the service and start the installed PostgreSQL service from an elevated PowerShell session if needed:
 
 ```powershell
-$env:DATABASE_URL = 'postgres://openledger:<local-password>@127.0.0.1:5432/openledger'
-npm run migrate
-npm run test:integration
+Get-Service -Name 'postgresql*'
+Start-Service -Name 'postgresql-x64-16'
+pg_isready -h localhost -p 5432
 ```
 
-Do not run the example command with the placeholder password unchanged. For the WSL-backed workflow, stop the Compose Postgres service first so port `5432` is not contested. Phase 0's documented one-command Compose workflow remains available and unchanged; the WSL path is the planned Phase 1 development database, not a production deployment plan.
+The service name can vary by installed PostgreSQL version. Once PostgreSQL is running, create the application role and database using the `postgres` administrator account. `createuser` prompts for a development password:
+
+```powershell
+createuser -h localhost -U postgres --pwprompt openledger
+createdb -h localhost -U postgres --owner=openledger openledger
+```
+
+### Run migrations and database tests
+
+From the repository root, set `DATABASE_URL` in the shell used for the migration and integration commands. Replace the placeholder with the local development password; do not commit it.
+
+```powershell
+$env:DATABASE_URL = 'postgres://openledger:<development-password>@localhost:5432/openledger'
+npm run migrate
+npm run test:integration
+Remove-Item Env:DATABASE_URL
+```
+
+For a Bash shell:
+
+```bash
+export DATABASE_URL='postgres://openledger:<development-password>@localhost:5432/openledger'
+npm run migrate
+npm run test:integration
+unset DATABASE_URL
+```
+
+The placeholder password must be replaced before running the commands. If Compose PostgreSQL is already using the default port, stop that service before starting a separate local server. This is local development guidance, not a production deployment plan.
 
 ## Design Questions to Resolve Before Scale-Out
 
