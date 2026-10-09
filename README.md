@@ -27,33 +27,43 @@ These goals are captured in the [architecture decision records](docs/adr/). The 
 
 Phase 0 runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose as a reserved service but no application currently depends on it. The simulator and dashboard are placeholders, not production clients.
 
+The supplied system diagram is the **target architecture**, not a picture of the current deployment. The present and planned designs, request flow, scaling rationale, and Phase 1 WSL PostgreSQL setup are described in [the architecture guide](docs/architecture.md).
+
+![Target OpenLedger topology with stateless API replicas, PgBouncer, Redis, a Postgres primary, read replica, and workers](docs/OpenledgerArchitecture.png)
+
+_Target topology for a later scale phase. Components beyond the single Phase 0 API and Postgres primary are proposals, not implemented or measured services._
+
 ```mermaid
 flowchart LR
-	client[Client] --> api[Fastify API]
-	simulator[Simulator placeholder] --> api
-	api --> pool[PgBouncer]
-	worker[Worker heartbeat] --> pool
-	pool --> db[Postgres primary]
-	migrator[Migration service] --> db
-	redis[Redis reserved, unused]
+	subgraph Current_Phase_0
+		client[HTTP client] --> api[One Fastify API]
+		api --> pool[PgBouncer]
+		worker[Heartbeat worker] --> pool
+		migrator[Migration job] --> db[(Postgres primary)]
+		pool --> db
+		redis[(Redis started, unused)]
+		sim[Simulator health placeholder]
+	end
 ```
 
 The API currently exposes `GET /health` and contract-shaped account and transfer routes. Health checks verify that Postgres answers a query. Account and transfer routes validate request shapes and return `501`. The worker performs a periodic database heartbeat. These behaviors are foundation checks, not ledger functionality.
 
 ## Repository Layout
 
-| Path                 | Responsibility                                                           |
-| -------------------- | ------------------------------------------------------------------------ |
-| `api/`               | Fastify application, routes, database plugin, and API integration tests  |
-| `worker/`            | Background worker process; currently a database heartbeat                |
-| `simulator/`         | Local traffic-simulator service placeholder                              |
-| `dashboard/`         | Operator UI placeholder and future dashboard notes                       |
-| `packages/shared/`   | Environment parsing, logging, money helpers, and generated OpenAPI types |
-| `migrations/`        | Raw SQL database migrations managed by `node-pg-migrate`                 |
-| `docs/openapi.yaml`  | Source API contract                                                      |
-| `docs/adr/`          | Accepted technical decisions and their rationale                         |
-| `docs/roadmap/`      | Phase scope, status, and exit criteria                                   |
-| `.github/workflows/` | Continuous integration checks                                            |
+| Path                              | Responsibility                                                           |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| `api/`                            | Fastify application, routes, database plugin, and API integration tests  |
+| `worker/`                         | Background worker process; currently a database heartbeat                |
+| `simulator/`                      | Local traffic-simulator service placeholder                              |
+| `dashboard/`                      | Operator UI placeholder and future dashboard notes                       |
+| `packages/shared/`                | Environment parsing, logging, money helpers, and generated OpenAPI types |
+| `migrations/`                     | Raw SQL database migrations managed by `node-pg-migrate`                 |
+| `docs/openapi.yaml`               | Source API contract                                                      |
+| `docs/architecture.md`            | Current and target system diagrams and design rationale                  |
+| `docs/OpenledgerArchitecture.png` | Supplied target topology image                                           |
+| `docs/adr/`                       | Accepted technical decisions and their rationale                         |
+| `docs/roadmap/`                   | Phase scope, status, and exit criteria                                   |
+| `.github/workflows/`              | Continuous integration checks                                            |
 
 The repository uses npm workspaces. The API, worker, and simulator are separate processes, while shared utilities remain in one package until their ownership needs justify a more granular split.
 
@@ -135,7 +145,7 @@ npm run dev:worker
 npm run dev:simulator
 ```
 
-The `dev:*` scripts watch source files. To run one process, start only its command. Set `DATABASE_URL` in that terminal before starting the API or worker.
+The `dev:*` scripts watch source files. To run one process, start only its command. Set `DATABASE_URL` in that terminal before starting the API or worker. Phase 1 will use the local Ubuntu WSL PostgreSQL instance; see [the database setup and architecture guide](docs/architecture.md#wsl-postgresql-for-phase-1-development).
 
 ## Configuration
 
@@ -187,4 +197,4 @@ No project license has been selected yet. Decide on a license before presenting 
 
 Phase-specific scope and exit criteria live in [docs/roadmap/phase-0.md](docs/roadmap/phase-0.md); scaling targets live in [docs/targets.md](docs/targets.md). Architecture decisions live under [docs/adr/](docs/adr/).
 
-Architecture and interface designs can be added as they are finalized. Visual assets supplied for the project will be kept in documentation assets and referenced from the relevant guide, with captions and alternative text where appropriate. No design or image files are part of the current Phase 0 baseline.
+The supplied architecture image is included above and in the [architecture guide](docs/architecture.md). Future diagrams should distinguish implemented behavior from proposed design and include a short rationale so the visuals explain decisions, not just components.

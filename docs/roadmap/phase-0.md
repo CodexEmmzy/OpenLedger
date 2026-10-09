@@ -58,4 +58,4 @@ Before an external push, review the staged file list and diff, confirm that no l
 
 ## Next Phase Gate
 
-Before enabling money movement, design the account and ledger schema, define transaction and locking rules for concurrent debits, specify idempotency semantics, and add invariant-focused integration tests. The first ledger implementation should make it impossible to commit an unbalanced transaction and should have a concurrency test capable of detecting overdrafts.
+Before enabling money movement, design the account and ledger schema, define transaction and locking rules for concurrent debits, specify idempotency semantics, and add invariant-focused integration tests. The first ledger implementation should make it impossible to commit an unbalanced transaction and should have a concurrency test capable of detecting overdrafts. Phase 1 local database setup will use PostgreSQL in Ubuntu WSL; see the [architecture guide](../architecture.md#wsl-postgresql-for-phase-1-development). Docker Compose remains the reproducible Phase 0 stack and CI environment.
