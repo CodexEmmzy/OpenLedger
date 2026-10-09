@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: openledger-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openledger
+      POSTGRES_USER: openledger_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets:
+      - db_admin_password
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+      - ./scripts/provision-db-roles.sql:/docker-entrypoint-initdb.d/10-provision-db-roles.sql
+    networks:
+      - internal_backend
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U openledger_admin -d openledger']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: openledger-prod-pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: openledger_admin
+      DB_PASSWORD_FILE: /run/secrets/db_admin_password
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 50
+    secrets:
+      - db_admin_password
+    networks:
+      - internal_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openledger-prod-migrator
+    command: ['npm', 'run', 'migrate']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://openledger_migrator:migrator_secret@postgres:5432/openledger
+    networks:
+      - internal_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openledger-prod-api
+    command: ['node', 'api/dist/index.js']
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://openledger_api:api_secret@pgbouncer:6432/openledger
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI}
+      PAYSTACK_SECRET_KEY_FILE: /run/secrets/paystack_secret_key
+      PAYSTACK_WEBHOOK_SECRET_FILE: /run/secrets/paystack_webhook_secret
+    secrets:
+      - paystack_secret_key
+      - paystack_webhook_secret
+    ports:
+      - '3000:3000'
+    networks:
+      - internal_backend
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openledger-prod-worker
+    command: ['node', 'worker/dist/index.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://openledger_worker:worker_secret@pgbouncer:6432/openledger
+      WORKER_INTERVAL_MS: 10000
+      PAYSTACK_SECRET_KEY_FILE: /run/secrets/paystack_secret_key
+    secrets:
+      - paystack_secret_key
+    networks:
+      - internal_backend
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+
+secrets:
+  db_admin_password:
+    external: true
+  paystack_secret_key:
+    external: true
+  paystack_webhook_secret:
+    external: true
+
+networks:
+  internal_backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata_prod:

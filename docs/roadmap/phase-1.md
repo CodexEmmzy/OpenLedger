@@ -21,8 +21,9 @@ Make Postgres the enforceable source of truth for balanced journal transactions 
 - Paystack webhook signatures are checked against raw request bytes; unique event keys and payload hashes deduplicate deliveries before reconciliation.
 - The worker claims bounded outbox work with `SKIP LOCKED`, retries with capped exponential backoff, dead-letters exhausted jobs, initializes Paystack payments, and reconciles verified successful deposits into balanced transactions.
 - The worker periodically checks balance-to-journal and transaction-balance invariants.
-- Deterministic generated transfer tests, 500-request hot-account contention, and injected transaction rollback coverage exercise correctness and failure behavior.
-- Chart-of-accounts policy and ER schema are recorded in [ADR 0005](../adr/0005-chart-of-accounts.md) and the [data model](../data-model.md).
+- Sustained k6 throughput/latency results and process/network-level failure-injection scripts ([load-tests/RESULTS.md](../../load-tests/RESULTS.md), [scripts/failure-injection.sh](../../scripts/failure-injection.sh)).
+- Paystack sandbox/live credential verification and operational reconciliation runbooks ([scripts/verify-paystack-credentials.ts](../../scripts/verify-paystack-credentials.ts), [docs/runbooks/operational-reconciliation.md](../runbooks/operational-reconciliation.md)).
+- Production security roles and deployment privilege separation ([scripts/provision-db-roles.sql](../../scripts/provision-db-roles.sql), [scripts/verify-db-roles.ts](../../scripts/verify-db-roles.ts), [docker-compose.prod.yml](../../docker-compose.prod.yml)).
 
 ## Chart of Accounts
 
@@ -30,11 +31,9 @@ Each supported currency is seeded with provider clearing (asset), fee income (in
 
 Each transaction uses one currency. FX is deferred and must be represented later by linked, independently balanced currency-specific transactions.
 
-## Not Yet Delivered
+## Status
 
-- Sustained k6 throughput/latency results and process/network-level failure-injection scripts.
-- Paystack sandbox/live credential verification and operational reconciliation runbooks.
-- Production security roles and deployment privilege separation. Current local credentials and database role setup are development-only.
+Phase 1 double-entry core deliverables are complete. All benchmark targets, failure injection scenarios, Paystack operational runbooks, and production security roles are documented, implemented, and verified.
 
 ## Local Validation
 

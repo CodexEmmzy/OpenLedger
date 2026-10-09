@@ -1,10 +1,7 @@
 import pg from 'pg';
 import { assertLedgerInvariants } from '../api/src/modules/ledger/ledger-repository.js';
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required');
-}
+const databaseUrl = process.env.DATABASE_URL || 'postgres://postgres@localhost:5432/openledger';
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
 try {
