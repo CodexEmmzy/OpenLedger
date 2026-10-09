@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from 'node:http';
 import swagger from '@fastify/swagger';
-import ajvFormats from 'ajv-formats';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { type ApiEnv, createLogger } from '@openledger/shared';
 import postgresPlugin from './plugins/postgres.js';
@@ -23,15 +22,16 @@ export async function buildApp(env: ApiEnv): Promise<FastifyInstance> {
       return randomUUID();
     },
     requestIdHeader: 'x-request-id',
-    requestIdLogLabel: 'requestId',
-    disableRequestLogging: false,
+    logController: new Fastify.LogController({
+      requestIdLogLabel: 'requestId',
+      disableRequestLogging: false,
+    }),
     ajv: {
       customOptions: {
         coerceTypes: false,
         removeAdditional: false,
         allErrors: true,
       },
-      plugins: [(ajv) => ajvFormats.default(ajv)],
     },
   });
 
