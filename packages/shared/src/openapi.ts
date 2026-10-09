@@ -30,7 +30,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create an account (Phase 0 stub) */
+        /** Create a customer account for the authenticated principal */
         post: operations["createAccount"];
         delete?: never;
         options?: never;
@@ -45,7 +45,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get an account (Phase 0 stub) */
+        /** Get an account owned by the authenticated principal */
         get: operations["getAccount"];
         put?: never;
         post?: never;
@@ -62,7 +62,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get account balance (Phase 0 stub) */
+        /** Get an account balance owned by the authenticated principal */
         get: operations["getAccountBalance"];
         put?: never;
         post?: never;
@@ -81,7 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post a transfer (Phase 0 stub) */
+        /** Transfer funds between owned customer accounts */
         post: operations["createTransfer"];
         delete?: never;
         options?: never;
@@ -96,10 +96,61 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a transfer (Phase 0 stub) */
+        /** Get a transfer involving accounts owned by the authenticated principal */
         get: operations["getTransfer"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/deposits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an authenticated Paystack deposit intent */
+        post: operations["createDepositIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/deposits/{reference}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a deposit intent owned by the authenticated principal */
+        get: operations["getDepositIntent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/paystack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receive and deduplicate signed Paystack webhook events */
+        post: operations["receivePaystackWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -112,6 +163,8 @@ export interface components {
     schemas: {
         /** @enum {string} */
         Currency: "NGN" | "USD";
+        /** @description Exact integer minor units; values beyond JavaScript safe integer range are decimal strings. */
+        MinorUnitsValue: number | string;
         HealthResponse: {
             /** @enum {string} */
             status: "ok";
@@ -131,18 +184,16 @@ export interface components {
             /** Format: uuid */
             id: string;
             currency: components["schemas"]["Currency"];
-            displayName?: string;
+            displayName: string;
+            /** @enum {string} */
+            status: "active" | "frozen" | "closed";
             /** Format: date-time */
             createdAt: string;
         };
         Balance: {
             /** Format: uuid */
             accountId: string;
-            /**
-             * Format: int64
-             * @description Integer minor units (kobo/cents). Never a float.
-             */
-            amountMinor: number;
+            amountMinor: components["schemas"]["MinorUnitsValue"];
             currency: components["schemas"]["Currency"];
         };
         CreateTransferRequest: {
@@ -150,12 +201,42 @@ export interface components {
             sourceAccountId: string;
             /** Format: uuid */
             destinationAccountId: string;
-            /**
-             * Format: int64
-             * @description Integer minor units (kobo/cents). Never a float.
-             */
+            /** @description Positive integer minor units, within exact JSON integer range. */
             amountMinor: number;
             currency: components["schemas"]["Currency"];
+        };
+        CreateDepositRequest: {
+            /** Format: uuid */
+            accountId: string;
+            amountMinor: number;
+            currency: components["schemas"]["Currency"];
+            /** Format: email */
+            email: string;
+        };
+        DepositAccepted: {
+            reference: string;
+            /** @enum {string} */
+            status: "pending";
+        };
+        DepositPayment: {
+            reference: string;
+            amountMinor: components["schemas"]["MinorUnitsValue"];
+            currency: components["schemas"]["Currency"];
+            /** @enum {string} */
+            status: "pending" | "initialized" | "succeeded" | "failed" | "reconciliation_required";
+            /** Format: uri */
+            authorizationUrl: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        PaystackWebhook: {
+            event: string;
+            data: {
+                reference: string;
+                amount: number;
+                currency: components["schemas"]["Currency"];
+                status: string;
+            };
         };
         Transfer: {
             /** Format: uuid */
@@ -164,17 +245,56 @@ export interface components {
             sourceAccountId: string;
             /** Format: uuid */
             destinationAccountId: string;
-            /** Format: int64 */
-            amountMinor: number;
+            amountMinor: components["schemas"]["MinorUnitsValue"];
             currency: components["schemas"]["Currency"];
             /** Format: date-time */
             createdAt: string;
         };
     };
-    responses: never;
+    responses: {
+        /** @description Request validation failed */
+        ValidationError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Missing or invalid bearer token */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Required ledger scope is missing */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Resource not found or not owned by the authenticated principal */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+    };
     parameters: {
         Id: string;
         IdempotencyKey: string;
+        PaymentReference: string;
+        /** @description HMAC-SHA512 of the exact raw request body using the Paystack secret key. */
+        PaystackSignature: string;
     };
     requestBodies: never;
     headers: never;
@@ -233,24 +353,9 @@ export interface operations {
                     "application/json": components["schemas"]["Account"];
                 };
             };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not implemented in this phase */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getAccount: {
@@ -273,24 +378,10 @@ export interface operations {
                     "application/json": components["schemas"]["Account"];
                 };
             };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not implemented in this phase */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getAccountBalance: {
@@ -304,7 +395,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Balance in integer minor units */
+            /** @description Balance in exact integer minor units */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -313,24 +404,10 @@ export interface operations {
                     "application/json": components["schemas"]["Balance"];
                 };
             };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not implemented in this phase */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     createTransfer: {
@@ -348,6 +425,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Previously committed result returned for an idempotent retry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transfer"];
+                };
+            };
             /** @description Transfer posted */
             201: {
                 headers: {
@@ -357,17 +443,12 @@ export interface operations {
                     "application/json": components["schemas"]["Transfer"];
                 };
             };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not implemented in this phase */
-            501: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Insufficient funds, currency mismatch, or idempotency conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -397,8 +478,40 @@ export interface operations {
                     "application/json": components["schemas"]["Transfer"];
                 };
             };
-            /** @description Validation error */
-            400: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createDepositIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDepositRequest"];
+            };
+        };
+        responses: {
+            /** @description Payment intent queued for Paystack initialization */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepositAccepted"];
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Provider integration is not configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -406,14 +519,83 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not implemented in this phase */
-            501: {
+        };
+    };
+    getDepositIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reference: components["parameters"]["PaymentReference"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deposit payment status */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["DepositPayment"];
                 };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    receivePaystackWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description HMAC-SHA512 of the exact raw request body using the Paystack secret key. */
+                "x-paystack-signature": components["parameters"]["PaystackSignature"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaystackWebhook"];
+            };
+        };
+        responses: {
+            /** @description Duplicate or unsupported event acknowledged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Signed event durably queued for reconciliation */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid event body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid signature */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Reused provider event key has a different payload */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

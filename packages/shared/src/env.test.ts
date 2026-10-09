@@ -10,4 +10,20 @@ describe('env', () => {
     const env = loadSimulatorEnv({ NODE_ENV: 'test', LOG_LEVEL: 'info' });
     expect(env.SIMULATOR_PORT).toBe(3001);
   });
+
+  it('requires complete OIDC configuration when any OIDC setting is supplied', () => {
+    expect(() =>
+      loadApiEnv({
+        NODE_ENV: 'test',
+        DATABASE_URL: 'postgres://local',
+        OIDC_ISSUER: 'https://identity.example.test',
+      }),
+    ).toThrow(/configured together/);
+  });
+
+  it('requires OIDC verification settings in production', () => {
+    expect(() => loadApiEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgres://local' })).toThrow(
+      /required in production/,
+    );
+  });
 });

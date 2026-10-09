@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 
 export type LedgerCurrency = string;
@@ -8,6 +9,7 @@ export type EntryDirection = 'debit' | 'credit';
 export interface CreateCustomerAccountInput {
   currency: LedgerCurrency;
   displayName: string;
+  ownerSubject: string;
   externalRef?: string;
 }
 
@@ -38,6 +40,38 @@ export interface PostedTransaction {
   status: 'posted';
   duplicate: boolean;
 }
+
+export interface OwnedTransfer {
+  id: string;
+  sourceAccountId: string;
+  destinationAccountId: string;
+  amountMinor: bigint;
+  currency: string;
+  createdAt: Date;
+}
+
+export interface CreatePaymentIntentInput {
+  reference: string;
+  idempotencyKey: string;
+  accountId: string;
+  ownerSubject: string;
+  amountMinor: bigint;
+  currency: LedgerCurrency;
+  customerEmail: string;
+}
+
+export interface ProviderPayment {
+  reference: string;
+  accountId: string;
+  amountMinor: bigint;
+  currency: string;
+  status: 'pending' | 'initialized' | 'succeeded' | 'failed' | 'reconciliation_required';
+  authorizationUrl: string | null;
+  createdAt: Date;
+  duplicate: boolean;
+}
+
+export type PaystackEventInsertResult = 'inserted' | 'duplicate' | 'conflict';
 
 interface AccountLockRow extends QueryResultRow {
   id: string;
@@ -97,10 +131,10 @@ export async function createCustomerAccount(
     status: CustomerAccount['status'];
     created_at: Date;
   }>(
-    `INSERT INTO accounts (display_name, currency, external_ref, kind, type)
-     VALUES ($1, $2, $3, 'customer', 'liability')
+    `INSERT INTO accounts (display_name, currency, external_ref, owner_subject, kind, type)
+     VALUES ($1, $2, $3, $4, 'customer', 'liability')
      RETURNING id, currency, display_name, status, created_at`,
-    [input.displayName, input.currency, input.externalRef ?? null],
+    [input.displayName, input.currency, input.externalRef ?? null, input.ownerSubject],
   );
   const row = result.rows[0];
   if (!row) {
@@ -113,6 +147,275 @@ export async function createCustomerAccount(
     status: row.status,
     createdAt: row.created_at,
   };
+}
+
+export async function getCustomerAccountForOwner(
+  pool: Pool,
+  accountId: string,
+  ownerSubject: string,
+): Promise<CustomerAccount | null> {
+  const result = await pool.query<{
+    id: string;
+    currency: string;
+    display_name: string;
+    status: CustomerAccount['status'];
+    created_at: Date;
+  }>(
+    `SELECT id, currency, display_name, status, created_at
+     FROM accounts
+     WHERE id = $1 AND owner_subject = $2 AND kind = 'customer'`,
+    [accountId, ownerSubject],
+  );
+  const row = result.rows[0];
+  return row
+    ? {
+        id: row.id,
+        currency: row.currency,
+        displayName: row.display_name,
+        status: row.status,
+        createdAt: row.created_at,
+      }
+    : null;
+}
+
+export async function getTransferForOwner(
+  pool: Pool,
+  transactionId: string,
+  ownerSubject: string,
+): Promise<OwnedTransfer | null> {
+  const result = await pool.query<{
+    id: string;
+    source_account_id: string;
+    destination_account_id: string;
+    amount_minor: string;
+    currency: string;
+    created_at: Date;
+  }>(
+    `SELECT t.id,
+       max(e.account_id::text) FILTER (WHERE e.direction = 'debit') AS source_account_id,
+       max(e.account_id::text) FILTER (WHERE e.direction = 'credit') AS destination_account_id,
+       sum(e.amount_minor) FILTER (WHERE e.direction = 'debit')::text AS amount_minor,
+       t.currency,
+       t.created_at
+     FROM transactions t
+     JOIN entries e ON e.transaction_id = t.id
+     JOIN accounts a ON a.id = e.account_id
+     WHERE t.id = $1 AND t.type = 'transfer' AND t.status = 'posted'
+     GROUP BY t.id, t.currency, t.created_at
+     HAVING count(*) = 2 AND bool_and(a.kind = 'customer' AND a.owner_subject = $2)`,
+    [transactionId, ownerSubject],
+  );
+  const row = result.rows[0];
+  return row
+    ? {
+        id: row.id,
+        sourceAccountId: row.source_account_id,
+        destinationAccountId: row.destination_account_id,
+        amountMinor: BigInt(row.amount_minor),
+        currency: row.currency,
+        createdAt: row.created_at,
+      }
+    : null;
+}
+
+export async function createPaystackPaymentIntent(
+  pool: Pool,
+  input: CreatePaymentIntentInput,
+): Promise<ProviderPayment> {
+  const requestHash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        accountId: input.accountId,
+        ownerSubject: input.ownerSubject,
+        amountMinor: input.amountMinor.toString(),
+        currency: input.currency,
+        customerEmail: input.customerEmail.trim().toLowerCase(),
+      }),
+    )
+    .digest('hex');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query<ProviderPaymentRow & { request_hash: string }>(
+      `SELECT reference, account_id, amount_minor::text, currency, status,
+         authorization_url, created_at, request_hash
+       FROM provider_payments WHERE idempotency_key = $1 FOR UPDATE`,
+      [input.idempotencyKey],
+    );
+    const existingPayment = existing.rows[0];
+    if (existingPayment) {
+      if (existingPayment.request_hash !== requestHash) {
+        throw new IdempotencyConflictError(input.idempotencyKey);
+      }
+      await client.query('COMMIT');
+      return mapProviderPayment(existingPayment, true);
+    }
+    const account = await client.query<{ currency: string; status: string }>(
+      `SELECT currency, status
+       FROM accounts
+       WHERE id = $1 AND owner_subject = $2 AND kind = 'customer'
+       FOR UPDATE`,
+      [input.accountId, input.ownerSubject],
+    );
+    const ownerAccount = account.rows[0];
+    if (!ownerAccount) {
+      throw new Error('account not found');
+    }
+    if (ownerAccount.status !== 'active' || ownerAccount.currency !== input.currency) {
+      throw new Error('account status or currency does not permit this payment');
+    }
+
+    const result = await client.query<{
+      reference: string;
+      account_id: string;
+      amount_minor: string;
+      currency: string;
+      status: ProviderPayment['status'];
+      authorization_url: string | null;
+      created_at: Date;
+    }>(
+      `INSERT INTO provider_payments
+        (reference, idempotency_key, request_hash, account_id, owner_subject, amount_minor, currency, customer_email)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING reference, account_id, amount_minor::text, currency, status, authorization_url, created_at`,
+      [
+        input.reference,
+        input.idempotencyKey,
+        requestHash,
+        input.accountId,
+        input.ownerSubject,
+        input.amountMinor.toString(),
+        input.currency,
+        input.customerEmail,
+      ],
+    );
+    const payment = result.rows[0];
+    if (!payment) {
+      const raced = await client.query<ProviderPaymentRow & { request_hash: string }>(
+        `SELECT reference, account_id, amount_minor::text, currency, status,
+           authorization_url, created_at, request_hash
+         FROM provider_payments WHERE idempotency_key = $1 FOR UPDATE`,
+        [input.idempotencyKey],
+      );
+      const racedPayment = raced.rows[0];
+      if (!racedPayment) {
+        throw new Error('payment idempotency conflict did not return an existing intent');
+      }
+      if (racedPayment.request_hash !== requestHash) {
+        throw new IdempotencyConflictError(input.idempotencyKey);
+      }
+      await client.query('COMMIT');
+      return mapProviderPayment(racedPayment, true);
+    }
+    await client.query(
+      `INSERT INTO outbox_events (event_type, aggregate_id, payload)
+       SELECT 'provider.paystack.initialize', id, jsonb_build_object('reference', reference)
+       FROM provider_payments WHERE reference = $1`,
+      [input.reference],
+    );
+    await client.query('COMMIT');
+    return mapProviderPayment(payment);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getProviderPaymentForOwner(
+  pool: Pool,
+  reference: string,
+  ownerSubject: string,
+): Promise<ProviderPayment | null> {
+  const result = await pool.query<ProviderPaymentRow>(
+    `SELECT reference, account_id, amount_minor::text, currency, status, authorization_url, created_at
+     FROM provider_payments WHERE reference = $1 AND owner_subject = $2`,
+    [reference, ownerSubject],
+  );
+  return result.rows[0] ? mapProviderPayment(result.rows[0]) : null;
+}
+
+interface ProviderPaymentRow extends QueryResultRow {
+  reference: string;
+  account_id: string;
+  amount_minor: string;
+  currency: string;
+  status: ProviderPayment['status'];
+  authorization_url: string | null;
+  created_at: Date;
+}
+
+function mapProviderPayment(row: ProviderPaymentRow): ProviderPayment {
+  function mapProviderPayment(row: ProviderPaymentRow, duplicate = false): ProviderPayment {
+  return {
+    reference: row.reference,
+    accountId: row.account_id,
+    amountMinor: BigInt(row.amount_minor),
+    currency: row.currency,
+    status: row.status,
+    authorizationUrl: row.authorization_url,
+    createdAt: row.created_at,
+    duplicate,
+  };
+  return result.rows[0] ? mapProviderPayment(result.rows[0]) : null;
+}
+
+export async function recordPaystackEvent(
+  pool: Pool,
+  event: {
+    eventKey: string;
+    eventType: string;
+    reference: string;
+    amountMinor: bigint;
+    currency: string;
+    payloadHash: string;
+  },
+): Promise<PaystackEventInsertResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO provider_events
+        (provider, event_key, event_type, reference, amount_minor, currency, payload_hash)
+       VALUES ('paystack', $1, $2, $3, $4, $5, $6)
+       ON CONFLICT (provider, event_key) DO NOTHING
+       RETURNING id`,
+      [
+        event.eventKey,
+        event.eventType,
+        event.reference,
+        event.amountMinor.toString(),
+        event.currency,
+        event.payloadHash,
+      ],
+    );
+    const row = inserted.rows[0];
+    if (!row) {
+      const prior = await client.query<{ payload_hash: string }>(
+        `SELECT payload_hash FROM provider_events
+         WHERE provider = 'paystack' AND event_key = $1
+         FOR UPDATE`,
+        [event.eventKey],
+      );
+      await client.query('COMMIT');
+      return prior.rows[0]?.payload_hash === event.payloadHash ? 'duplicate' : 'conflict';
+    }
+
+    await client.query(
+      `INSERT INTO outbox_events (event_type, aggregate_id, payload)
+        VALUES ('provider.paystack.event', $1, jsonb_build_object('eventId', $2::text))`,
+      [randomUUID(), row.id],
+    );
+    await client.query('COMMIT');
+    return 'inserted';
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function postLedgerTransaction(

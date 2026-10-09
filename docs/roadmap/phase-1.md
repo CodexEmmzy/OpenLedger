@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make Postgres the enforceable source of truth for balanced journal transactions and make the current balance a derived, transactionally maintained projection. The phase is being delivered incrementally; database/repository work is in place, while the public account and transfer routes remain `501` stubs.
+Make Postgres the enforceable source of truth for balanced journal transactions and make the current balance a derived, transactionally maintained projection. The database, repository, authenticated account/transfer endpoints, Paystack webhook queue, and reconciliation worker are implemented and locally tested. Production credentials, hardened runtime roles, and target-scale evidence remain deployment gates.
 
 ## Delivered
 
@@ -16,6 +16,12 @@ Make Postgres the enforceable source of truth for balanced journal transactions 
 - A typed SQL repository handles account creation, stable account locking, posting, duplicate request handling, balance reads, and reusable invariant checks.
 - A reusable test verifies 500 concurrent debit attempts against one funded account without overdraft.
 - An idempotent bulk seed utility creates local load-test customer accounts.
+- Account creation, balance, and internal transfer HTTP handlers are OIDC-protected, owner-scoped, and call the typed repository.
+- Deposit intents are owner-scoped and idempotent; Paystack initialization is scheduled through the outbox.
+- Paystack webhook signatures are checked against raw request bytes; unique event keys and payload hashes deduplicate deliveries before reconciliation.
+- The worker claims bounded outbox work with `SKIP LOCKED`, retries with capped exponential backoff, dead-letters exhausted jobs, initializes Paystack payments, and reconciles verified successful deposits into balanced transactions.
+- The worker periodically checks balance-to-journal and transaction-balance invariants.
+- Deterministic generated transfer tests, 500-request hot-account contention, and injected transaction rollback coverage exercise correctness and failure behavior.
 - Chart-of-accounts policy and ER schema are recorded in [ADR 0005](../adr/0005-chart-of-accounts.md) and the [data model](../data-model.md).
 
 ## Chart of Accounts
@@ -26,9 +32,8 @@ Each transaction uses one currency. FX is deferred and must be represented later
 
 ## Not Yet Delivered
 
-- Account creation, balance, and transfer HTTP handlers that call the ledger repository. Existing endpoints still validate their contract and return `501`.
-- Provider API integration, webhook authentication/deduplication, outbox processing, and reconciliation jobs.
-- Property-based ledger tests, sustained k6 throughput/latency results, and failure-injection scripts.
+- Sustained k6 throughput/latency results and process/network-level failure-injection scripts.
+- Paystack sandbox/live credential verification and operational reconciliation runbooks.
 - Production security roles and deployment privilege separation. Current local credentials and database role setup are development-only.
 
 ## Local Validation
@@ -54,4 +59,4 @@ Seeded records use stable external references, so repeating a seed command does 
 
 Before the ledger is exposed through the API, route handlers must remain thin adapters: validate and map HTTP requests, call repository operations, and map domain/database errors to API responses. The repository and database stay responsible for transaction boundaries and correctness. Endpoint tests must prove idempotent retries, validation, balance behavior, and stable error semantics. Load targets remain unclaimed until measured; see [the target matrix](../targets.md).
 
-Real-money endpoints have an additional security gate: authentication, object authorization, least-privilege database identities, bounded request/rate/concurrency policies, production secret/network controls, and evidence for the high-risk items in the [security guide](../security.md) and [threat model](../threat-model.md) must be completed first. Phase 1 ledger tests do not certify the service for money movement.
+Real-money endpoints have an additional security gate: production least-privilege database identities, bounded edge/request/rate/concurrency policies, production secret/network controls, provider sandbox evidence, operational reconciliation runbooks, and resolution of high-risk items in the [security guide](../security.md) and [threat model](../threat-model.md). Phase 1 tests do not certify the service for unrestricted money movement or production traffic.

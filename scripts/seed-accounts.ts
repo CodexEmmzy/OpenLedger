@@ -23,11 +23,12 @@ const pool = new pg.Pool({ connectionString: databaseUrl });
 
 try {
   const result = await pool.query(
-    `INSERT INTO accounts (external_ref, display_name, currency, kind, type)
+    `INSERT INTO accounts (external_ref, display_name, currency, owner_subject, kind, type)
      SELECT
        'loadtest:' || $2 || ':' || generated.account_number,
        'Load test wallet ' || generated.account_number,
        $2,
+       'loadtest',
        'customer',
        'liability'
      FROM generate_series(1, $1) AS generated(account_number)

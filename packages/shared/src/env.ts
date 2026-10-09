@@ -2,20 +2,53 @@ import { z } from 'zod';
 
 const nodeEnv = z.enum(['development', 'test', 'production']).default('development');
 const logLevel = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info');
+const optionalNonEmpty = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().min(1).optional(),
+);
+const optionalUrl = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().url().optional(),
+);
 
 const baseSchema = z.object({
   NODE_ENV: nodeEnv,
   LOG_LEVEL: logLevel,
 });
 
-export const apiEnvSchema = baseSchema.extend({
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().min(1),
-});
+export const apiEnvSchema = baseSchema
+  .extend({
+    PORT: z.coerce.number().int().positive().default(3000),
+    DATABASE_URL: z.string().min(1),
+    OIDC_ISSUER: optionalUrl,
+    OIDC_AUDIENCE: optionalNonEmpty,
+    OIDC_JWKS_URL: optionalUrl,
+    PAYSTACK_SECRET_KEY: optionalNonEmpty,
+    PAYSTACK_BASE_URL: z.string().url().default('https://api.paystack.co'),
+  })
+  .superRefine((env, ctx) => {
+    const oidcValues = [env.OIDC_ISSUER, env.OIDC_AUDIENCE, env.OIDC_JWKS_URL];
+    if (oidcValues.some(Boolean) && !oidcValues.every(Boolean)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OIDC_ISSUER, OIDC_AUDIENCE, and OIDC_JWKS_URL must be configured together',
+        path: ['OIDC_ISSUER'],
+      });
+    }
+    if (env.NODE_ENV === 'production' && !oidcValues.every(Boolean)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OIDC settings are required in production',
+        path: ['OIDC_ISSUER'],
+      });
+    }
+  });
 
 export const workerEnvSchema = baseSchema.extend({
   DATABASE_URL: z.string().min(1),
   WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+  PAYSTACK_SECRET_KEY: optionalNonEmpty,
+  PAYSTACK_BASE_URL: z.string().url().default('https://api.paystack.co'),
 });
 
 export const simulatorEnvSchema = baseSchema.extend({

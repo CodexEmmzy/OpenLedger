@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadApiEnv } from '@openledger/shared';
+import type { IdentityVerifier } from '../src/auth/oidc.js';
 import { buildApp } from '../src/app.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -12,7 +13,13 @@ describe('OpenAPI request validation', () => {
       NODE_ENV: 'test',
       LOG_LEVEL: 'error',
     });
-    app = await buildApp(env);
+    const identityVerifier: IdentityVerifier = async (authorization) => {
+      if (authorization !== 'Bearer test-token') {
+        throw new Error('invalid test token');
+      }
+      return { subject: 'integration-user', scopes: new Set(['ledger:read', 'ledger:write']) };
+    };
+    app = await buildApp(env, { identityVerifier });
   });
 
   afterAll(async () => {
@@ -34,14 +41,34 @@ describe('OpenAPI request validation', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('returns 501 for a valid create-account payload', async () => {
+  it('creates a customer account for the authenticated principal', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/accounts',
+      headers: { authorization: 'Bearer test-token' },
       payload: { currency: 'NGN', displayName: 'ops' },
     });
-    expect(res.statusCode).toBe(501);
-    expect(res.json().error).toBe('not_implemented');
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({
+      currency: 'NGN',
+      displayName: 'ops',
+      status: 'active',
+    });
+    const ownership = await app.db.query(
+      'SELECT 1 FROM accounts WHERE id = $1 AND owner_subject = $2',
+      [res.json().id, 'integration-user'],
+    );
+    expect(ownership.rowCount).toBe(1);
+  });
+
+  it('rejects account creation without a verified bearer token', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/accounts',
+      payload: { currency: 'NGN' },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error).toBe('unauthorized');
   });
 
   it('rejects a transfer without Idempotency-Key', async () => {

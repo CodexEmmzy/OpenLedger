@@ -9,6 +9,15 @@ export {
 } from './env.js';
 export { createLogger } from './logger.js';
 export {
+  initializePaystackPayment,
+  verifyPaystackSignature,
+  verifyPaystackTransaction,
+  type PaystackConfig,
+  type PaystackInitializationInput,
+  type PaystackInitializationResult,
+  type PaystackVerifiedTransaction,
+} from './paystack.js';
+export {
   type MinorUnits,
   addMinorUnits,
   assertNonNegative,

@@ -67,10 +67,15 @@ services:
       args:
         SERVICE: api
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
       LOG_LEVEL: info
       DATABASE_URL: postgres://openledger:openledger@pgbouncer:6432/openledger
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
     ports:
       - '3000:3000'
     depends_on:
@@ -96,6 +101,8 @@ services:
       LOG_LEVEL: info
       DATABASE_URL: postgres://openledger:openledger@pgbouncer:6432/openledger
       WORKER_INTERVAL_MS: 30000
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
     depends_on:
       migrate:
         condition: service_completed_successfully

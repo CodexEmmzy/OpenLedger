@@ -278,10 +278,104 @@ describe('ledger database invariants', () => {
     expect(report.unbalancedTransactionIds).toEqual([]);
   });
 
+  it('preserves journal/balance invariants across deterministic generated transfers', async () => {
+    const wallets = await Promise.all(Array.from({ length: 8 }, () => createWallet('NGN')));
+    const fundedAmount = 100_000n;
+    const fundingEntries = [
+      { accountId: clearingAccountId, direction: 'debit' as const, amountMinor: fundedAmount * 8n },
+      ...wallets.map((wallet) => ({
+        accountId: wallet.id,
+        direction: 'credit' as const,
+        amountMinor: fundedAmount,
+      })),
+    ];
+    await postLedgerTransaction(pool, {
+      idempotencyKey: `property-funding:${randomUUID()}`,
+      type: 'deposit',
+      currency: 'NGN',
+      entries: fundingEntries,
+    });
+
+    let randomState = 0x1badb002;
+    const next = (maximum: number) => {
+      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+      return randomState % maximum;
+    };
+    const expectedBalances = new Map(wallets.map((wallet) => [wallet.id, fundedAmount]));
+    for (let index = 0; index < 100; index += 1) {
+      const sourceIndex = next(wallets.length);
+      let destinationIndex = next(wallets.length - 1);
+      if (destinationIndex >= sourceIndex) {
+        destinationIndex += 1;
+      }
+      const source = wallets[sourceIndex];
+      const destination = wallets[destinationIndex];
+      if (!source || !destination) {
+        throw new Error('deterministic generator selected an invalid wallet');
+      }
+      const amountMinor = BigInt(next(1000) + 1);
+      const result = await postLedgerTransaction(pool, {
+        idempotencyKey: `property-transfer:${randomUUID()}`,
+        type: 'transfer',
+        currency: 'NGN',
+        entries: [
+          { accountId: source.id, direction: 'debit', amountMinor },
+          { accountId: destination.id, direction: 'credit', amountMinor },
+        ],
+      });
+      expect(result.status).toBe('posted');
+      expectedBalances.set(source.id, expectedBalances.get(source.id)! - amountMinor);
+      expectedBalances.set(destination.id, expectedBalances.get(destination.id)! + amountMinor);
+    }
+
+    for (const wallet of wallets) {
+      expect((await getAccountBalance(pool, wallet.id)).balanceMinor).toBe(
+        expectedBalances.get(wallet.id),
+      );
+    }
+    const report = await assertLedgerInvariants(pool);
+    expect(report.balanceMismatches).toEqual([]);
+    expect(report.unbalancedTransactionIds).toEqual([]);
+  });
+
+  it('rolls back entries and projections after injected mid-transaction failure', async () => {
+    const wallet = await createWallet('NGN');
+    const client = await pool.connect();
+    const transactionId = randomUUID();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO transactions (id, idempotency_key, request_hash, type, currency)
+         VALUES ($1, $2, $3, 'deposit', 'NGN')`,
+        [transactionId, `chaos:${randomUUID()}`, 'a'.repeat(64)],
+      );
+      await client.query(
+        `INSERT INTO entries (transaction_id, account_id, direction, amount_minor)
+         VALUES ($1, $2, 'debit', 42)`,
+        [transactionId, clearingAccountId],
+      );
+      await client.query('SELECT 1 / 0');
+      await client.query('COMMIT');
+    } catch {
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+
+    const transaction = await pool.query('SELECT 1 FROM transactions WHERE id = $1', [
+      transactionId,
+    ]);
+    expect(transaction.rowCount).toBe(0);
+    expect((await getAccountBalance(pool, wallet.id)).balanceMinor).toBe(0n);
+    const report = await assertLedgerInvariants(pool);
+    expect(report.balanceMismatches).toEqual([]);
+  });
+
   async function createWallet(currency: 'NGN' | 'USD') {
     return createCustomerAccount(pool, {
       currency,
       displayName: 'Integration test wallet',
+      ownerSubject: 'ledger-integration-owner',
       externalRef: `integration:${randomUUID()}`,
     });
   }

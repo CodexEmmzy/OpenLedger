@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from 'node:http';
 import swagger from '@fastify/swagger';
+import rawBody from 'fastify-raw-body';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { type ApiEnv, createLogger } from '@openledger/shared';
+import type { IdentityVerifier } from './auth/oidc.js';
+import { createOidcVerifier } from './auth/oidc.js';
 import postgresPlugin from './plugins/postgres.js';
 import { loadOpenApiSpec, specPath } from './openapi/load-spec.js';
 import { healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1.js';
 
-export async function buildApp(env: ApiEnv): Promise<FastifyInstance> {
+export async function buildApp(
+  env: ApiEnv,
+  options: { identityVerifier?: IdentityVerifier } = {},
+): Promise<FastifyInstance> {
   const logger = createLogger(env);
   const spec = loadOpenApiSpec();
 
@@ -34,8 +40,10 @@ export async function buildApp(env: ApiEnv): Promise<FastifyInstance> {
       },
     },
   });
+  app.decorateRequest('principal', null);
 
   await app.register(postgresPlugin, { databaseUrl: env.DATABASE_URL });
+  await app.register(rawBody, { global: false, encoding: false, runFirst: true });
   await app.register(swagger, {
     mode: 'static',
     specification: {
@@ -66,6 +74,9 @@ export async function buildApp(env: ApiEnv): Promise<FastifyInstance> {
   });
 
   await healthRoutes(app);
-  await v1Routes(app, spec);
+  await v1Routes(app, spec, options.identityVerifier ?? createOidcVerifier(env), {
+    paystackSecretKey: env.PAYSTACK_SECRET_KEY,
+    paystackBaseUrl: env.PAYSTACK_BASE_URL,
+  });
   return app;
 }
