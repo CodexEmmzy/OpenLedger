@@ -2,7 +2,11 @@
 
 This guide separates the current implementation from the proposed target architecture. The target diagram is aspirational: replicas, caching, provider webhooks, and horizontal API scaling are not yet implemented or load-tested.
 
-## Current: Phase 1 Ledger Core
+Security boundaries, current controls, production blockers, and the defensive threat register are documented in the [security guide](security.md) and [threat model](threat-model.md).
+
+The figures below are separate views of the system: what runs now, where correctness is enforced, how concurrency is serialized, and how future read and provider paths should behave. Mermaid blocks render as diagrams on GitHub and in compatible Markdown previews.
+
+## 1. Current: Phase 1 Ledger Core
 
 ```mermaid
 flowchart LR
@@ -21,7 +25,7 @@ The current stack has one API process, one worker process, one Postgres primary,
 
 Compose services do not necessarily represent implemented application features. Current endpoints and limitations are documented in the [Phase 0 guide](roadmap/phase-0.md).
 
-## Target: Scaled Deployment
+## 2. Target: Scaled Deployment
 
 ![Target OpenLedger architecture: clients and provider simulator enter through a load balancer to stateless API replicas; Redis and a read replica serve suitable reads while PgBouncer and workers connect to a Postgres primary](OpenledgerArchitecture.png)
 
@@ -52,7 +56,7 @@ The target separates request handling, durable writes, asynchronous work, and re
 
 The target is not a mandate to deploy every box at once. Add replicas, caching, and additional API processes only with measurements and an operational plan for their failure modes.
 
-## Candidate Transfer Write Path
+## 3. Candidate Transfer Write Path
 
 This sequence sketches a correctness boundary for the next implementation phase. It is a design direction, not an existing endpoint implementation.
 
@@ -79,7 +83,72 @@ sequenceDiagram
 
 The central invariant is that the transfer, its debit and credit entries, any derived balance update, the idempotency result, and the outbox event cannot be partially committed. For every posted transaction, the sum of its entries is zero. Concurrent debits must be serialized or otherwise constrained so the same available funds cannot be spent twice. Implementation ADRs and Postgres integration and concurrency tests must establish the locking strategy, schema constraints, retry behavior, and balance representation.
 
-## Read and Write Boundaries
+### 5. Commit or Reject
+
+```mermaid
+flowchart TD
+    request[Transfer request] --> validate[Validate input and identity]
+    validate --> begin[Begin database transaction]
+    begin --> idem[Claim or read idempotency key]
+    idem --> locks[Lock account rows in stable order]
+    locks --> rules[Check account status and currency]
+    rules --> writes[Insert transfer and journal entries]
+    writes --> projection[Update balance projection]
+    projection --> deferred[Run deferred balance and journal checks]
+    deferred --> decision{All invariants pass}
+    decision -->|yes| commit[Commit once]
+    decision -->|no| rollback[Rollback every write]
+```
+
+_The repository/database path implements this commit boundary. Identity validation is not yet implemented on the HTTP routes._
+
+### 6. Hot-Account Serialization
+
+```mermaid
+sequenceDiagram
+    participant First as Request A
+    participant Second as Request B
+    participant DB as Postgres primary
+    First->>DB: Lock wallet row
+    Second->>DB: Request same wallet lock
+    Note over Second,DB: Request B waits while A owns the lock
+    First->>DB: Check funds and write debit and credit
+    First->>DB: Commit
+    DB-->>Second: Release row lock
+    Second->>DB: Read the committed wallet balance
+    alt Funds remain available
+        Second->>DB: Write balanced entries and commit
+    else Funds are insufficient
+        DB-->>Second: Reject and roll back
+    end
+```
+
+_The integration test exercises 500 concurrent debit attempts. The row lock and database overdraft rule protect correctness; this is not a throughput benchmark._
+
+### 7. Durable Provider Work
+
+```mermaid
+sequenceDiagram
+    participant API as API transaction
+    participant DB as Postgres primary
+    participant Worker as Future outbox worker
+    participant Provider as Future provider
+    API->>DB: Commit ledger and outbox event together
+    Worker->>DB: Claim a bounded batch of committed events
+    Worker->>Provider: Send with stable provider idempotency key
+    alt Provider confirms
+        Provider-->>Worker: Success response
+        Worker->>DB: Record delivery result
+    else Provider times out
+        Provider-->>Worker: No confirmed result
+        Worker->>DB: Record retry state with backoff
+        Worker->>Provider: Retry same logical operation
+    end
+```
+
+_Outbox delivery is target behavior, not yet implemented. The ledger transaction must not remain open while a provider call is in flight._
+
+## 4. Read and Write Boundaries
 
 ```mermaid
 flowchart LR
@@ -97,6 +166,20 @@ flowchart LR
 ```
 
 The dotted paths are optional future optimizations. The primary transaction is the only authority for accepting a transfer; cache and replica data may be stale and must not authorize spending.
+
+### 8. Read Routing by Consistency Need
+
+```mermaid
+flowchart LR
+    balance[Spend or available-funds decision] --> primary[(Primary database)]
+    history[History query that tolerates lag] --> replica[(Future read replica)]
+    dashboard[Dashboard summary with short staleness] --> cache[(Future cache)]
+    replica -. replication delay .-> primary
+    primary --> journal[Authoritative journal]
+    journal --> projection[Transactional balance projection]
+```
+
+_Only the primary may authorize a write. Replica and cache paths remain optional until consistency behavior and measurements justify them._
 
 ## Local PostgreSQL for Phase 1 Development
 

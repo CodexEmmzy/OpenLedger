@@ -53,3 +53,5 @@ Seeded records use stable external references, so repeating a seed command does 
 ## Exit Gate
 
 Before the ledger is exposed through the API, route handlers must remain thin adapters: validate and map HTTP requests, call repository operations, and map domain/database errors to API responses. The repository and database stay responsible for transaction boundaries and correctness. Endpoint tests must prove idempotent retries, validation, balance behavior, and stable error semantics. Load targets remain unclaimed until measured; see [the target matrix](../targets.md).
+
+Real-money endpoints have an additional security gate: authentication, object authorization, least-privilege database identities, bounded request/rate/concurrency policies, production secret/network controls, and evidence for the high-risk items in the [security guide](../security.md) and [threat model](../threat-model.md) must be completed first. Phase 1 ledger tests do not certify the service for money movement.

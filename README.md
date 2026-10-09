@@ -10,6 +10,8 @@ OpenLedger is a double-entry ledger project built around one requirement: concur
 - [Phase 1 ledger core status](docs/roadmap/phase-1.md)
 - [Performance and correctness targets](docs/targets.md)
 - [Ledger schema and invariants](docs/data-model.md)
+- [Security controls and production gate](docs/security.md)
+- [Threat model and defensive risk register](docs/threat-model.md)
 - [Architecture decisions](docs/adr/)
 - [OpenAPI contract](docs/openapi.yaml)
 
