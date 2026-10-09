@@ -5,5 +5,8 @@ coverage
 *.log
 .DS_Store
 .idea
+.cursor/
+.env*
+!.env.example
 .vscode/*
 !.vscode/extensions.json
