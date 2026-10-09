@@ -67,6 +67,14 @@ describe('Paystack payment intent and webhook boundary', () => {
     });
     expect(changedRetry.statusCode).toBe(409);
 
+    await app.db.query(
+      `UPDATE outbox_events
+       SET status = 'completed', completed_at = now()
+       WHERE event_type = 'provider.paystack.initialize'
+         AND payload->>'reference' = $1`,
+      [intent.json().reference],
+    );
+
     const persisted = await app.db.query<{ status: string }>(
       'SELECT status FROM provider_payments WHERE reference = $1',
       [intent.json().reference],
@@ -103,20 +111,30 @@ describe('Paystack payment intent and webhook boundary', () => {
       NODE_ENV: 'test',
       LOG_LEVEL: 'error',
       DATABASE_URL: process.env.DATABASE_URL,
+      PAYSTACK_SECRET_KEY: webhookSecret,
     });
-    await processOutboxBatch(
-      app.db,
-      workerEnv,
-      createLogger(workerEnv),
-      `paystack-test-worker-${randomUUID()}`,
-      10,
-      async (_config, reference) => ({
-        reference,
-        status: 'success',
-        amountMinor: 12345n,
-        currency: 'NGN',
-      }),
-    );
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await processOutboxBatch(
+        app.db,
+        workerEnv,
+        createLogger(workerEnv),
+        `paystack-test-worker-${randomUUID()}`,
+        1,
+        async (_config, reference) => ({
+          reference,
+          status: 'success',
+          amountMinor: 12345n,
+          currency: 'NGN',
+        }),
+      );
+      const reconciled = await app.db.query(
+        `SELECT 1 FROM provider_payments WHERE reference = $1 AND status = 'succeeded'`,
+        [intent.json().reference],
+      );
+      if (reconciled.rowCount === 1) {
+        break;
+      }
+    }
 
     const storedEvents = await app.db.query(
       `SELECT 1 FROM provider_events

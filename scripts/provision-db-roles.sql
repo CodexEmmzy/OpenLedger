@@ -12,21 +12,21 @@ GRANT USAGE ON SCHEMA public
 GRANT SELECT, INSERT ON accounts TO openledger_api_runtime;
 GRANT SELECT ON accounts TO openledger_worker_runtime;
 
-GRANT SELECT, INSERT, UPDATE ON account_balances
-  TO openledger_api_runtime, openledger_worker_runtime;
-GRANT SELECT, INSERT, UPDATE ON transactions
-  TO openledger_api_runtime, openledger_worker_runtime;
-GRANT SELECT, INSERT ON entries
-  TO openledger_api_runtime, openledger_worker_runtime;
-GRANT SELECT, INSERT ON transaction_status_history
-  TO openledger_api_runtime, openledger_worker_runtime;
+GRANT SELECT, INSERT, UPDATE ON account_balances TO openledger_api_runtime;
+GRANT SELECT, INSERT, UPDATE ON transactions TO openledger_api_runtime;
+GRANT SELECT, INSERT ON entries TO openledger_api_runtime;
+GRANT SELECT ON transaction_status_history TO openledger_api_runtime;
+GRANT SELECT, INSERT ON provider_payments TO openledger_api_runtime;
+GRANT SELECT, INSERT ON provider_events TO openledger_api_runtime;
+GRANT SELECT, INSERT ON outbox_events TO openledger_api_runtime;
 
-GRANT SELECT, INSERT, UPDATE ON provider_payments
-  TO openledger_api_runtime, openledger_worker_runtime;
-GRANT SELECT, INSERT, UPDATE ON provider_events
-  TO openledger_api_runtime, openledger_worker_runtime;
-GRANT SELECT, INSERT, UPDATE ON outbox_events
-  TO openledger_api_runtime, openledger_worker_runtime;
+GRANT SELECT, INSERT, UPDATE ON account_balances TO openledger_worker_runtime;
+GRANT SELECT, INSERT, UPDATE ON transactions TO openledger_worker_runtime;
+GRANT SELECT, INSERT ON entries TO openledger_worker_runtime;
+GRANT SELECT ON transaction_status_history TO openledger_worker_runtime;
+GRANT SELECT, UPDATE ON provider_payments TO openledger_worker_runtime;
+GRANT SELECT, UPDATE ON provider_events TO openledger_worker_runtime;
+GRANT SELECT, UPDATE ON outbox_events TO openledger_worker_runtime;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public
   TO openledger_api_runtime, openledger_worker_runtime, openledger_migrator;

@@ -19,7 +19,7 @@ describe('Paystack adapter', () => {
         JSON.stringify({
           status: true,
           data: {
-            authorization_url: 'https://checkout.paystack.test/authorize/1',
+            authorization_url: 'https://checkout.paystack.com/authorize/1',
             reference: 'deposit-reference-1',
           },
         }),
@@ -39,7 +39,7 @@ describe('Paystack adapter', () => {
       },
     );
     expect(result.providerReference).toBe('deposit-reference-1');
-    expect(result.authorizationUrl).toBe('https://checkout.paystack.test/authorize/1');
+    expect(result.authorizationUrl).toBe('https://checkout.paystack.com/authorize/1');
   });
 
   it('rejects Paystack amounts outside the exact JSON integer range', async () => {

@@ -10,18 +10,20 @@ The figures below are separate views of the system: what runs now, where correct
 
 ```mermaid
 flowchart LR
-    client[HTTP client] --> api[Fastify API health and contract stubs]
+    client[OIDC-authenticated client] --> api[Fastify account transfer and deposit routes]
     api --> pool[PgBouncer]
-    worker[Worker heartbeat] --> pool
+    worker[Outbox worker and invariant checks] --> pool
     pool --> db[(Postgres primary)]
     migrate[Migration service] --> db
-    tests[Ledger repository integration tests] --> apiRepo[Typed SQL repository not wired to HTTP routes]
+    tests[Postgres integration tests] --> apiRepo[Typed SQL repository]
+    api --> apiRepo
     apiRepo --> db
+    provider[Paystack signed webhook] --> api
     redis[(Redis container; unused by app)]
     simulator[Simulator health placeholder]
 ```
 
-The current stack has one API process, one worker process, one Postgres primary, and PgBouncer. The worker only checks database connectivity. Account and transfer HTTP routes remain contract-validation stubs and return `501`; the typed ledger repository is exercised directly by Postgres integration tests and is not yet wired to those routes. The simulator exposes a health endpoint but does not generate provider traffic or call the API. Redis starts in Compose but application code does not use it. Migrations connect directly to Postgres; API and worker database traffic goes through PgBouncer.
+The current local stack has one API process, one worker process, one Postgres primary, and PgBouncer. OIDC-protected account, balance, and transfer endpoints call the owner-scoped typed repository. Deposit intents and signed Paystack webhooks are persisted and reconciled through a durable outbox. The worker performs bounded job processing and periodic invariant checks. The simulator still exposes only a health endpoint and does not generate provider traffic. Redis starts in Compose but application code does not use it. Migrations connect directly to Postgres; API and worker database traffic goes through PgBouncer.
 
 Compose services do not necessarily represent implemented application features. Current endpoints and limitations are documented in the [Phase 0 guide](roadmap/phase-0.md).
 

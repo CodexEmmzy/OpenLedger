@@ -34,7 +34,7 @@ erDiagram
         enum type
         enum status
         char currency
-        uuid reversal_of UK_FK
+        uuid reversal_of UK
         timestamptz created_at
     }
     ENTRIES {
@@ -57,6 +57,7 @@ erDiagram
         uuid id PK
         varchar reference UK
         varchar idempotency_key UK
+        char request_hash
         uuid account_id FK
         text owner_subject
         bigint amount_minor

@@ -347,8 +347,7 @@ interface ProviderPaymentRow extends QueryResultRow {
   created_at: Date;
 }
 
-function mapProviderPayment(row: ProviderPaymentRow): ProviderPayment {
-  function mapProviderPayment(row: ProviderPaymentRow, duplicate = false): ProviderPayment {
+function mapProviderPayment(row: ProviderPaymentRow, duplicate = false): ProviderPayment {
   return {
     reference: row.reference,
     accountId: row.account_id,
@@ -359,7 +358,6 @@ function mapProviderPayment(row: ProviderPaymentRow): ProviderPayment {
     createdAt: row.created_at,
     duplicate,
   };
-  return result.rows[0] ? mapProviderPayment(result.rows[0]) : null;
 }
 
 export async function recordPaystackEvent(

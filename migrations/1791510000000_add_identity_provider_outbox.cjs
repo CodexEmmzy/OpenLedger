@@ -76,6 +76,8 @@ exports.up = (pgm) => {
     BEGIN
       IF OLD.id IS DISTINCT FROM NEW.id
         OR OLD.reference IS DISTINCT FROM NEW.reference
+        OR OLD.idempotency_key IS DISTINCT FROM NEW.idempotency_key
+        OR OLD.request_hash IS DISTINCT FROM NEW.request_hash
         OR OLD.account_id IS DISTINCT FROM NEW.account_id
         OR OLD.owner_subject IS DISTINCT FROM NEW.owner_subject
         OR OLD.amount_minor IS DISTINCT FROM NEW.amount_minor
@@ -93,6 +95,10 @@ exports.up = (pgm) => {
           RAISE EXCEPTION 'provider payment status transition is not allowed'
             USING ERRCODE = '23514';
         END IF;
+        ELSIF OLD.authorization_url IS DISTINCT FROM NEW.authorization_url
+          OR OLD.provider_reference IS DISTINCT FROM NEW.provider_reference THEN
+          RAISE EXCEPTION 'provider response fields can only change with payment status'
+            USING ERRCODE = '23514';
       END IF;
       NEW.updated_at := now();
       RETURN NEW;

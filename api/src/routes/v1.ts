@@ -406,7 +406,7 @@ export async function v1Routes(
           currency: body.currency,
           customerEmail: body.email,
         });
-        return reply.code(payment.status === 'pending' ? 202 : 200).send({
+        return reply.code(payment.duplicate ? 200 : 202).send({
           reference: payment.reference,
           status: payment.status,
         });

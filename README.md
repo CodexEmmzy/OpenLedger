@@ -1,8 +1,8 @@
 # OpenLedger
 
-OpenLedger is a double-entry ledger project built around one requirement: concurrent activity must never corrupt an account balance. The repository is being developed in public phases. Phase 1 now provides a database-enforced ledger core and typed repository; the HTTP account and transfer routes are not yet wired to it and still return `501 Not Implemented`.
+OpenLedger is a double-entry ledger project built around one requirement: concurrent activity must never corrupt an account balance. The repository is being developed in public phases. Phase 1 provides a database-enforced ledger core, OIDC-protected owner-scoped account and transfer routes, and a Paystack deposit/webhook outbox flow. Production deployment and target-scale claims remain unproven.
 
-> **Current scope:** account and transfer routes are contract-defined stubs and return `501 Not Implemented`. Do not use this project to hold or move real money.
+> **Current scope:** local/test implementation only. Do not use this project to hold or move real money; no production credentials, provider sandbox certification, or production operations approval are configured.
 
 ## Project Guide
 
@@ -29,7 +29,7 @@ These goals are captured in the [architecture decision records](docs/adr/). The 
 
 ## Architecture
 
-The local stack runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose as a reserved service but no application currently depends on it. The simulator and dashboard are placeholders, not production clients. Phase 1 adds the ledger schema and repository module; application endpoints remain stubs until they are deliberately connected to the repository.
+The local stack runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose but application code does not use it. The simulator and dashboard are placeholders. Phase 1 includes authenticated account/transfer endpoints, durable provider intents/events/outbox records, a Paystack webhook verifier, and worker-side reconciliation. Scale-out components remain proposals until measured.
 
 The supplied system diagram is the **target architecture**, not a picture of the current deployment. The present and planned designs, request flow, scaling rationale, and Phase 1 local PostgreSQL setup are described in [the architecture guide](docs/architecture.md).
 
@@ -50,7 +50,7 @@ flowchart LR
 	end
 ```
 
-The API currently exposes `GET /health` and contract-shaped account and transfer routes. Health checks verify that Postgres answers a query. Account and transfer routes validate request shapes and return `501`. The worker performs a periodic database heartbeat. These behaviors are foundation checks, not ledger functionality.
+The API exposes `GET /health`, OIDC-protected owner-scoped account and transfer routes, and Paystack deposit intent/webhook routes. Internal transfers post balanced entries through the typed repository. Deposits are credited only after the webhook signature and Paystack server-side transaction verification both pass. The worker processes bounded outbox jobs and periodically checks ledger invariants. Identity/provider values must be explicitly configured; without OIDC settings protected routes fail closed.
 
 ## Repository Layout
 
@@ -92,14 +92,14 @@ docker compose up --build
 
 Compose starts Postgres and Redis. Once Postgres is healthy, the migration service applies migrations while PgBouncer starts; the API waits for both migration completion and PgBouncer readiness, and the worker waits for migration completion and PgBouncer readiness. Database data is stored in the `pgdata` named volume and remains between ordinary `docker compose down` and subsequent starts.
 
-| Service    | Local address                  | Phase 0 behavior                        |
-| ---------- | ------------------------------ | --------------------------------------- |
-| API        | `http://localhost:3000`        | Health route and validated route stubs  |
-| API health | `http://localhost:3000/health` | Checks Postgres connectivity            |
-| Simulator  | `http://localhost:3001/health` | Placeholder health endpoint             |
-| Postgres   | `localhost:5432`               | Primary database and migration target   |
-| PgBouncer  | `localhost:6432`               | Transaction-pooling connection endpoint |
-| Redis      | `localhost:6379`               | Started, not used by application code   |
+| Service    | Local address                  | Phase 0 behavior                                   |
+| ---------- | ------------------------------ | -------------------------------------------------- |
+| API        | `http://localhost:3000`        | Health, authenticated ledger and deposit endpoints |
+| API health | `http://localhost:3000/health` | Checks Postgres connectivity                       |
+| Simulator  | `http://localhost:3001/health` | Placeholder health endpoint                        |
+| Postgres   | `localhost:5432`               | Primary database and migration target              |
+| PgBouncer  | `localhost:6432`               | Transaction-pooling connection endpoint            |
+| Redis      | `localhost:6379`               | Started, not used by application code              |
 
 Stop services with `docker compose down`. `docker compose down -v` also deletes the database volume and its contents; use it only when you intend to discard local database state.
 
@@ -177,13 +177,13 @@ The API uses structured Pino logs and assigns a request ID to each request. A su
 npm run openapi:types
 ```
 
-Do not edit the generated type file directly. Account and transfer endpoints establish request and response shapes, but their handlers intentionally return `501` in this phase. Money fields use integer minor units. See [ADR 0001](docs/adr/0001-integer-minor-units.md) before changing amount representation.
+Do not edit the generated type file directly. Account, balance, internal transfer, deposit intent, and Paystack webhook request/response shapes are documented in OpenAPI. Money fields use exact integer minor units. See [ADR 0001](docs/adr/0001-integer-minor-units.md) before changing amount representation.
 
 ## Database and Migrations
 
 Postgres is the system of record. `node-pg-migrate` applies versioned migrations from `migrations/`; application database access uses parameterized `pg` queries. API and worker connect through PgBouncer in transaction-pooling mode, while the migration service connects directly to Postgres.
 
-The migrations enable `pgcrypto`, define accounts, transactions, immutable entries, balance projections, and status history, and seed provider-clearing, fee-income, and suspense accounts for NGN and USD. A deferred constraint trigger rejects incomplete or unbalanced posted transactions at commit. Entry triggers update the balance projection atomically and reject customer overdrafts. See the [data model](docs/data-model.md), [Phase 1 status](docs/roadmap/phase-1.md), and [chart-of-accounts ADR](docs/adr/0005-chart-of-accounts.md).
+The migrations enable `pgcrypto`, define accounts, transactions, immutable entries, balance projections, status history, owner subjects, provider payment/event records, and a durable outbox. A deferred constraint trigger rejects incomplete or unbalanced posted transactions and verifies balance projections against the journal at commit. Entry triggers maintain projections and reject customer overdrafts. See the [data model](docs/data-model.md), [Phase 1 status](docs/roadmap/phase-1.md), and [chart-of-accounts ADR](docs/adr/0005-chart-of-accounts.md).
 
 ## Tests and Continuous Integration
 
@@ -209,7 +209,7 @@ The supported currencies are currently NGN and USD. The seed command is intended
 
 This is an engineering foundation, not a production deployment. Compose credentials are intentionally simple local-development values. Do not put real credentials, customer data, or production keys in source, documentation, test fixtures, or screenshots. Keep local environment files and editor/session artifacts out of commits; review `git status` and the staged diff before publishing.
 
-No project license has been selected yet. Decide on a license before presenting this as an openly licensed public project. Deployment hardening, authentication, authorization, key management, threat modeling, audit retention, and operational runbooks are not implemented in Phase 0.
+No project license has been selected yet. Decide on a license before presenting this as an openly licensed public project. Production database login roles are provisioned separately by a database administrator using [the role script](scripts/provision-db-roles.sql); local Compose credentials remain development-only. Independent security review, production key management/rotation, public-edge rate controls, audit retention, provider sandbox certification, operational runbooks, and recovery drills remain required.
 
 ## Roadmap and Visual References
 

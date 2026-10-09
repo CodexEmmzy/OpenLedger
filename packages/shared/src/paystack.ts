@@ -65,8 +65,15 @@ export async function initializePaystackPayment(
   ) {
     throw new Error('Paystack returned an invalid initialization response');
   }
+  const authorizationUrl = new URL(envelope.data.authorization_url);
+  if (
+    authorizationUrl.protocol !== 'https:' ||
+    (authorizationUrl.hostname !== 'paystack.com' && !authorizationUrl.hostname.endsWith('.paystack.com'))
+  ) {
+    throw new Error('Paystack returned a checkout URL outside its trusted HTTPS domain');
+  }
   return {
-    authorizationUrl: envelope.data.authorization_url,
+    authorizationUrl: authorizationUrl.toString(),
     providerReference: envelope.data.reference,
   };
 }

@@ -13,15 +13,15 @@ Security work is tracked as implementation plus evidence, not as a checklist tha
 | Request validation           | OpenAPI-derived JSON Schema validates route inputs; coercion is disabled. Integration tests cover invalid identifiers, missing headers, and fractional minor units.                                                                  | Set explicit request/body/array limits; fuzz schemas and parsers; ensure every future route has validation and consistent error mapping.                                                     |
 | SQL injection                | Ledger repository uses PostgreSQL bind parameters for values and fixed SQL statements.                                                                                                                                               | Keep dynamic identifiers out of interpolated SQL; add static analysis and adversarial injection tests to every query surface.                                                                |
 | Ledger correctness           | Database constraints and triggers enforce positive entries, one transaction currency, forward-only status, append-only entries/history, balanced postings at commit, nonnegative customer balances, and balance-to-journal equality. | Production database roles must prevent application callers from bypassing trigger paths; independent review of migrations and concurrency model; backup/restore and reconciliation evidence. |
-| Idempotency                  | Unique database key, canonical request hash, conflict handling, and integration coverage exist in the repository module.                                                                                                             | Wire repository to authenticated routes; define key scope/retention and client response semantics; load-test contention and concurrent duplicates.                                           |
-| Authentication/authorization | OIDC JWT signature, issuer, audience, age, and scope verification is implemented when configured; customer rows are owner-scoped. Production startup refuses missing OIDC configuration. | Configure a real issuer/JWKS/audience, test key rotation/outage behavior, privileged-operation controls, and independent authorization review. |
+| Idempotency                  | Internal transfers and Paystack deposit intents use unique database keys, canonical hashes, conflict handling, and API integration coverage.                                                                                         | Define retention/client semantics, load-test concurrent duplicates, and test uncertain-commit recovery.                                                                                      |
+| Authentication/authorization | OIDC JWT signature, issuer, audience, age, and scope verification is implemented when configured; customer rows are owner-scoped. Production startup refuses missing OIDC configuration.                                             | Configure a real issuer/JWKS/audience, test key rotation/outage behavior, privileged-operation controls, and independent authorization review.                                               |
 | Rate and resource limits     | Fastify provides request parsing and a default body limit; no application rate limiter or admission policy is configured.                                                                                                            | Enforce edge and application quotas, bounded batch sizes, per-identity concurrency, request deadlines, database statement timeouts, queue limits, and backpressure.                          |
 | Secrets                      | `.env` and `.env.*` are ignored except `.env.example`; environment values are validated at startup.                                                                                                                                  | Replace Compose defaults, use a managed secret store, rotate credentials, restrict secret readers, scan history and CI artifacts, and use separate runtime/migration identities.             |
 | Transport/network            | Compose is a local development topology.                                                                                                                                                                                             | TLS at every external boundary, private database networks, firewall policy, no public database ports, and verified production proxy configuration.                                           |
 | Logging                      | Structured Pino logging and request IDs exist; errors are returned as generic `500` responses.                                                                                                                                       | Redact credentials, tokens, payment data, and personal data; prevent untrusted request IDs from forging log correlation; centralize tamper-resistant audit events and alerting.              |
 | CI/dependencies              | GitHub Actions runs formatting, lint, typecheck, unit tests, migrations, and Postgres integration tests.                                                                                                                             | Pin actions by immutable commit, automate dependency and secret scanning, generate an SBOM, protect releases, scan images, and review migration changes.                                     |
 | Availability                 | Compose health checks and PgBouncer readiness gates exist.                                                                                                                                                                           | Multi-zone topology, tested failover, DDoS plan, load-tested capacity, circuit breakers, queue recovery, backups, point-in-time restore, and incident runbooks.                              |
-| Provider callbacks           | Paystack HMAC-SHA512 over raw bytes, unique event keys/payload hashes, and bounded outbox reconciliation are implemented.                                                                                                             | Configure and rotate real secrets; test sandbox retries, key rotation, rate limits, alerts, and incident recovery. |
+| Provider callbacks           | Paystack HMAC-SHA512 over raw bytes, unique event keys/payload hashes, and bounded outbox reconciliation are implemented.                                                                                                            | Configure and rotate real secrets; test sandbox retries, key rotation, rate limits, alerts, and incident recovery.                                                                           |
 
 The development Compose file deliberately makes local services easy to inspect. Its credentials, exposed ports, and single-primary setup are not a deployment template. Do not reuse them outside a local isolated environment.
 
@@ -32,18 +32,18 @@ The diagram distinguishes current protections from controls required before inte
 ```mermaid
 flowchart LR
     attacker[Untrusted clients and bots] --> edge[Future edge: TLS, DDoS filtering, quotas]
-    edge --> gateway[Future gateway: identity, authorization, rate limits]
+    edge --> gateway[OIDC identity and scope checks present; edge quotas future]
     gateway --> api[Fastify API: schema validation present]
     api --> repo[Typed repository: parameterized SQL present]
     repo --> tx[Single PostgreSQL transaction]
     tx --> constraints[Database invariants present]
     constraints --> ledger[(Postgres journal and balance projection)]
-    api -. future bounded event .-> queue[Durable outbox and bounded worker queue]
-    queue -. future .-> provider[Authenticated provider integration]
+    api --> queue[Durable outbox present; queue capacity policy future]
+    queue --> provider[Paystack adapter and webhook verification present]
     api -. future redacted telemetry .-> audit[Security monitoring and audit store]
 ```
 
-OIDC and database integrity controls exist in code; the internet edge, rate limiting, and production queue capacity controls remain incomplete. The diagram is a control plan and does not claim the future edge or production monitoring is deployed.
+OIDC verification, scope checks, and owner scoping are implemented. The diagram's authorization policy remains a deployment/runtime responsibility and still needs independent review.
 
 ## Financial Safety Rules
 
@@ -99,8 +99,8 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant Caller as Caller
-    participant Auth as Future identity layer
-    participant Policy as Future authorization policy
+    participant Auth as OIDC verifier present
+    participant Policy as Scope and owner checks present
     participant API as API route
     participant Repo as Repository
     participant DB as Postgres
@@ -117,7 +117,7 @@ sequenceDiagram
     end
 ```
 
-_Identity and authorization are not implemented; current money routes are nonfunctional stubs._
+Database runtime role groups are defined by the administrator-run [`provision-db-roles.sql`](../scripts/provision-db-roles.sql) script. They intentionally contain no passwords or login roles; deployment provisioning must create separate login identities through the secret-management system and grant them the appropriate runtime group. Migrations must run under a separate migrator identity. The role script still requires validation against the production ownership model before it is applied.
 
 ### 4. Large-Request and Flood Control
 
@@ -135,7 +135,7 @@ flowchart TD
     concurrency -. saturated .-> busy[Return 503 with retry guidance]
 ```
 
-_The current API has no application rate limiter or admission policy. Limits must be measured and set before internet exposure._
+The current API has no application rate limiter or admission policy. Limits must be measured and set before internet exposure.
 
 ### 5. Injection and Ledger Containment
 
