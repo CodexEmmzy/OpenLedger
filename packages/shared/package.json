@@ -1,0 +1,13 @@
+{
+  "name": "@openledger/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "pino": "^9.11.0",
+    "zod": "^3.25.76"
+  }
+}
