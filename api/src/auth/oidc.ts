@@ -1,6 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { ApiEnv } from '@openledger/shared';
-import type { FastifyRequest } from 'fastify';
 
 export interface AuthenticatedPrincipal {
   subject: string;

@@ -13,6 +13,12 @@ export default tseslint.config(
       globals: { exports: 'writable' },
     },
   },
+  {
+    files: ['load-tests/**/*.js'],
+    languageOptions: {
+      globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' },
+    },
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   prettier,

@@ -1,12 +1,5 @@
 import pg from 'pg';
 
-interface RolePrivilegeResult {
-  role: string;
-  canInsertAccount: boolean;
-  canRunDDL: boolean;
-  canTruncate: boolean;
-}
-
 async function testRolePrivileges(): Promise<void> {
   console.log('==========================================================');
   console.log('OpenLedger Production Security Role Privileges Audit');
