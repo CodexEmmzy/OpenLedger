@@ -2,20 +2,22 @@
 
 This guide separates the current implementation from the proposed target architecture. The target diagram is aspirational: replicas, caching, provider webhooks, and horizontal API scaling are not yet implemented or load-tested.
 
-## Current: Phase 0
+## Current: Phase 1 Ledger Core
 
 ```mermaid
 flowchart LR
-    client[HTTP client] --> api[Fastify API]
+    client[HTTP client] --> api[Fastify API health and contract stubs]
     api --> pool[PgBouncer]
     worker[Worker heartbeat] --> pool
     pool --> db[(Postgres primary)]
     migrate[Migration service] --> db
+    tests[Ledger repository integration tests] --> apiRepo[Typed SQL repository not wired to HTTP routes]
+    apiRepo --> db
     redis[(Redis container; unused by app)]
     simulator[Simulator health placeholder]
 ```
 
-The Phase 0 application has one API process, one worker process, one Postgres primary, and PgBouncer. The worker only checks database connectivity. The simulator exposes a health endpoint but does not generate provider traffic or call the API. Redis starts in Compose but application code does not use it. Migrations connect directly to Postgres; API and worker database traffic goes through PgBouncer.
+The current stack has one API process, one worker process, one Postgres primary, and PgBouncer. The worker only checks database connectivity. Account and transfer HTTP routes remain contract-validation stubs and return `501`; the typed ledger repository is exercised directly by Postgres integration tests and is not yet wired to those routes. The simulator exposes a health endpoint but does not generate provider traffic or call the API. Redis starts in Compose but application code does not use it. Migrations connect directly to Postgres; API and worker database traffic goes through PgBouncer.
 
 Compose services do not necessarily represent implemented application features. Current endpoints and limitations are documented in the [Phase 0 guide](roadmap/phase-0.md).
 
@@ -98,7 +100,7 @@ The dotted paths are optional future optimizations. The primary transaction is t
 
 ## Local PostgreSQL for Phase 1 Development
 
-The next implementation phase uses a local PostgreSQL instance for development and database-backed tests. The Phase 0 Compose stack remains available for reproducible startup and CI. Only one local service should bind PostgreSQL's default port at a time.
+Local PostgreSQL can be used for development and database-backed tests. Docker Compose remains available for reproducible startup and CI. Only one local service should bind PostgreSQL's default port at a time.
 
 ### Linux
 

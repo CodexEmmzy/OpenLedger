@@ -17,6 +17,7 @@
     "test:integration": "vitest run --project integration",
     "migrate": "node-pg-migrate up -m migrations --migration-file-language js",
     "migrate:down": "node-pg-migrate down -m migrations --migration-file-language js",
+    "seed:accounts": "tsx scripts/seed-accounts.ts",
     "openapi:types": "openapi-typescript docs/openapi.yaml -o packages/shared/src/openapi.ts",
     "dev:api": "npm run dev -w @openledger/api",
     "dev:worker": "npm run dev -w @openledger/worker",

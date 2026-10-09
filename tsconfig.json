@@ -22,6 +22,7 @@
     "api/test/**/*.ts",
     "worker/src/**/*.ts",
     "simulator/src/**/*.ts",
+    "scripts/**/*.ts",
     "packages/shared/src/**/*.ts",
     "vitest.config.ts"
   ]

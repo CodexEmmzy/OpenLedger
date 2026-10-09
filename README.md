@@ -1,13 +1,15 @@
 # OpenLedger
 
-OpenLedger is a double-entry ledger project built around one requirement: concurrent activity must never corrupt an account balance. The repository is being developed in phases. The current Phase 0 establishes the service, database, API contract, and testing foundations; it does not yet post ledger transactions.
+OpenLedger is a double-entry ledger project built around one requirement: concurrent activity must never corrupt an account balance. The repository is being developed in public phases. Phase 1 now provides a database-enforced ledger core and typed repository; the HTTP account and transfer routes are not yet wired to it and still return `501 Not Implemented`.
 
 > **Current scope:** account and transfer routes are contract-defined stubs and return `501 Not Implemented`. Do not use this project to hold or move real money.
 
 ## Project Guide
 
 - [Phase 0 scope and exit checklist](docs/roadmap/phase-0.md)
+- [Phase 1 ledger core status](docs/roadmap/phase-1.md)
 - [Performance and correctness targets](docs/targets.md)
+- [Ledger schema and invariants](docs/data-model.md)
 - [Architecture decisions](docs/adr/)
 - [OpenAPI contract](docs/openapi.yaml)
 
@@ -25,7 +27,7 @@ These goals are captured in the [architecture decision records](docs/adr/). The 
 
 ## Architecture
 
-Phase 0 runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose as a reserved service but no application currently depends on it. The simulator and dashboard are placeholders, not production clients.
+The local stack runs the API and worker against one Postgres primary through PgBouncer. Migrations connect directly to Postgres. Redis is present in Compose as a reserved service but no application currently depends on it. The simulator and dashboard are placeholders, not production clients. Phase 1 adds the ledger schema and repository module; application endpoints remain stubs until they are deliberately connected to the repository.
 
 The supplied system diagram is the **target architecture**, not a picture of the current deployment. The present and planned designs, request flow, scaling rationale, and Phase 1 local PostgreSQL setup are described in [the architecture guide](docs/architecture.md).
 
@@ -53,12 +55,15 @@ The API currently exposes `GET /health` and contract-shaped account and transfer
 | Path                              | Responsibility                                                           |
 | --------------------------------- | ------------------------------------------------------------------------ |
 | `api/`                            | Fastify application, routes, database plugin, and API integration tests  |
+| `api/src/modules/ledger/`         | Typed SQL repository and reusable ledger invariant checker               |
 | `worker/`                         | Background worker process; currently a database heartbeat                |
 | `simulator/`                      | Local traffic-simulator service placeholder                              |
 | `dashboard/`                      | Operator UI placeholder and future dashboard notes                       |
 | `packages/shared/`                | Environment parsing, logging, money helpers, and generated OpenAPI types |
 | `migrations/`                     | Raw SQL database migrations managed by `node-pg-migrate`                 |
+| `scripts/seed-accounts.ts`        | Idempotent bulk account seeder for local load testing                    |
 | `docs/openapi.yaml`               | Source API contract                                                      |
+| `docs/data-model.md`              | Ledger entity diagram and database invariant reference                   |
 | `docs/architecture.md`            | Current and target system diagrams and design rationale                  |
 | `docs/OpenledgerArchitecture.png` | Supplied target topology image                                           |
 | `docs/adr/`                       | Accepted technical decisions and their rationale                         |
@@ -176,7 +181,7 @@ Do not edit the generated type file directly. Account and transfer endpoints est
 
 Postgres is the system of record. `node-pg-migrate` applies versioned migrations from `migrations/`; application database access uses parameterized `pg` queries. API and worker connect through PgBouncer in transaction-pooling mode, while the migration service connects directly to Postgres.
 
-Phase 0 currently creates the `pgcrypto` extension only. It does not yet define accounts, ledger transactions, entries, idempotency records, or an outbox. Schema and transaction design for those records belongs to later phases and must preserve the invariant that each posted transaction balances to zero.
+The migrations enable `pgcrypto`, define accounts, transactions, immutable entries, balance projections, and status history, and seed provider-clearing, fee-income, and suspense accounts for NGN and USD. A deferred constraint trigger rejects incomplete or unbalanced posted transactions at commit. Entry triggers update the balance projection atomically and reject customer overdrafts. See the [data model](docs/data-model.md), [Phase 1 status](docs/roadmap/phase-1.md), and [chart-of-accounts ADR](docs/adr/0005-chart-of-accounts.md).
 
 ## Tests and Continuous Integration
 
@@ -185,7 +190,18 @@ Phase 0 currently creates the `pgcrypto` extension only. It does not yet define 
 - `npm run lint`, `npm run typecheck`, and `npm run format:check` gate source quality.
 - GitHub Actions runs local checks and integration tests against a Postgres service.
 
-Phase 0 does not yet contain the concurrency, property-based invariant, k6 load, or failure-injection tests listed in [the target matrix](docs/targets.md). Do not report target throughput or latency numbers as achieved until results are checked in with the tooling that produced them.
+Phase 1 includes a 500-request hot-account integration test, idempotency and reversal checks, and a reusable invariant checker. It does not yet contain the k6 throughput/latency suite or failure-injection tests listed in [the target matrix](docs/targets.md). Do not report target throughput or latency numbers as achieved until results are checked in with the tooling that produced them.
+
+## Seed Local Accounts
+
+After migrations have been applied and `DATABASE_URL` is set, the seeder creates 10,000 NGN load-test customer accounts by default. Re-running it is safe because each generated account has a stable external reference.
+
+```bash
+npm run seed:accounts
+npm run seed:accounts -- --count=2000 --currency=USD
+```
+
+The supported currencies are currently NGN and USD. The seed command is intended for development databases, not production.
 
 ## Security and Publication Notes
 
@@ -195,6 +211,6 @@ No project license has been selected yet. Decide on a license before presenting 
 
 ## Roadmap and Visual References
 
-The public roadmap records phase scope and exit criteria in [docs/roadmap/phase-0.md](docs/roadmap/phase-0.md), with scaling targets in [docs/targets.md](docs/targets.md). It distinguishes implemented foundations from planned capabilities so progress remains visible without presenting future work as delivered. Architecture decisions live under [docs/adr/](docs/adr/).
+The public roadmap records phase scope and exit criteria in [docs/roadmap/](docs/roadmap/), with scaling targets in [docs/targets.md](docs/targets.md). It distinguishes implemented foundations from planned capabilities so progress remains visible without presenting future work as delivered. Architecture decisions live under [docs/adr/](docs/adr/).
 
 The supplied architecture image is included above and in the [architecture guide](docs/architecture.md). Future diagrams should distinguish implemented behavior from proposed design and include a short rationale so the visuals explain decisions, not just components.
