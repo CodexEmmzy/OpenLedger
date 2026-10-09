@@ -21,10 +21,10 @@ erDiagram
         boolean allow_negative
     }
     ACCOUNT_BALANCES {
-        uuid account_id PK_FK
+        uuid account_id PK
         bigint balance_minor
         bigint version
-        timestamptz updated_at
+        timestamp updated_at
     }
     TRANSACTIONS {
         uuid id PK
